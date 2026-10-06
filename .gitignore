@@ -1,0 +1,44 @@
+# yt-paw .gitignore
+
+# --- private planning (not committed) ---
+/plan/
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+.venv/
+venv/
+.env/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# --- Qt / PySide6 ---
+*.qm
+*.ts.bak
+*.qssc
+
+# --- PyInstaller ---
+dist/
+build/
+*.spec.bak
+
+# --- SQLite / app data ---
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# --- logs / downloads (local runs) ---
+logs/
+downloads/
+
+# --- OS / editors ---
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
