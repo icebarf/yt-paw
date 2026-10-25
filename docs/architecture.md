@@ -41,8 +41,8 @@ must not complicate the default path.
    gallery/anime-style, audio/Spotify-style) behind one queue, one history,
    one download directory.
 5. **Light footprint:** No browser engine, no local web server, no Electron.
-   Target cold start < 2s, idle RAM < 150 MB, installer < 80 MB (excluding
-   ffmpeg where possible).
+   Target cold start < 2s, idle RAM < 150 MB, app payload < 80 MB (excluding
+   the bundled Deno/FFmpeg sidecars).
 6. **MIT-clean:** All application code MIT. All dependencies must be
    MIT/BSD/Apache-2.0/Unlicense/LGPL-dynamic compatible. No GPL copyleft in
    the distribution chain.
@@ -71,7 +71,7 @@ must not complicate the default path.
 | Concurrency | `QThreadPool` + `QProcess` + Qt signals/slots | Keeps UI thread free. One worker per download job; bounded pool (default 2 concurrent). Progress via signal emission, never direct widget mutation from workers. |
 | Persistence | SQLite only (`sqlite3` stdlib) | Single `app.db` holds `jobs` + `settings`. No TOML/INI/YAML config files. `QSettings` used only for transient Qt window geometry; all domain settings live in SQLite. No ORM in v1; `dataclasses` + thin repository layer. |
 | Engine registry | Python modules + SQLite overrides | Engines are `engines/<id>.py` classes. User overrides (binary path, args template, enabled) stored in `engine_settings` table, not config files. |
-| Packaging | PyInstaller one-folder + bundled `ffmpeg` (frozen) + sidecar `yt-dlp` (stable) | Team experience with PyInstaller; Nuitka not evaluated. One-folder avoids single-file AV false positives and enables in-place engine update (replace `bin/yt-dlp`). `ffmpeg` is frozen and only updated with app releases. |
+| Packaging | PyInstaller one-folder (Windows x86_64 / Linux x86_64) + per-platform pinned sidecars `yt-dlp`, `ffmpeg` (BtbN LGPL shared), `deno` in `bin/` (FFmpeg `.so` files in `lib/` on Linux) | Team experience with PyInstaller; Nuitka not evaluated. One-folder avoids single-file AV false positives and enables in-place engine update (replace `bin/yt-dlp`). Sidecars are hash-pinned and verified at build time (`docs/packaging.md`). |
 | Testing | `pytest` + `pytest-qt` | Headless widget tests in CI (`QT_QPA_PLATFORM=offscreen`). Engine contract tests use fixture JSON, not live network. |
 | Lint/format | `ruff` + `mypy` (strict on core) | Fast, minimal config. Type hints mandatory on engine interface and services. |
 
@@ -679,8 +679,11 @@ Design notes:
 ~/Downloads/yt-paw/ (default output, setting app.output_dir, user-changeable)
   %(uploader)s/%(title)s [%(id)s].%(ext)s
 <install>/bin/
-  yt-dlp[.exe]           # bundled stable channel (auto-updated)
-  ffmpeg[.exe]           # frozen, app-release only
+  yt-dlp[.exe]           # bundled stable channel (auto-updated into app-data)
+  ffmpeg[.exe]           # frozen by app release
+  ffprobe[.exe]          # frozen by app release (shares ffmpeg DLLs)
+  av*-*.dll, sw*-*.dll   # FFmpeg LGPL shared build
+  deno[.exe]             # JS runtime for yt-dlp (frozen by app release)
 ```
 
 No `config.toml`. Output template is a setting (`app.output_template`);
@@ -696,25 +699,54 @@ sanitized via engine `--restrict-filenames` + app-side forbidden-char strip.
 | Bundled engine (`bin/yt-dlp`) | Stable channel, **auto-update at startup** | **Implemented 2026-10-05** (`infra/updater.py`): for source=auto engines only — GitHub latest release JSON (carries per-asset `digest: sha256`) → asset → mandatory SHA256 verify → atomic replace into `<app-data>/bin/`. SHA2-256SUMS is only a fallback (that endpoint stalls 20s+); dependency downloads fetch checksum + archive in parallel. GitHub asset hosts intermittently blackhole TCP for ~21s, so an **8s stall watchdog retries once with a fresh connection**; second stall fails friendly. Banner shows “Checking…”/“Downloading…” immediately. Host allowlist, HTTPS, 90s watchdog. Manual “Get latest (stable)” button in Settings. System/PATH engines never touched. |
 | System engine (Linux `PATH`) | Distro cadence | **Respected, never overwritten.** UI shows `system yt-dlp X` + package hint. One-click “Switch to bundled stable” if user wants auto-updates. |
 | ffmpeg (frozen) | App releases only | Bundled and probed at startup (`ffmpeg -version`) for About/diagnostics. **Frozen by design** — extractor churn does not require ffmpeg bumps. Updated only when app ships. |
+| Pinned Python + bundled sidecars | 90–180 days per component | `packaging/deps.py` reads `dependency-policy.json`/`dependency-state.json` and only updates when a component is due. Python pins move together with `uv lock`; yt-dlp/Deno URLs and SHA-256 move together; FFmpeg hashes refresh from BtbN's rolling checksum. Monthly CI only reports due; it never pushes dependency changes. |
 
 This satisfies §2.1-2: YouTube extractor breakage is fixed by bundled-engine
 auto-update, not app release, while Linux system installs remain untouched.
+The dependency train is intentionally idle between due dates: an available newer
+version is not a reason to update. `docs/dependency-updates.md` is the human/agent
+runbook; security exceptions use `deps.py update --security`.
 
 ---
 
 ## 10. Packaging and Distribution
 
-- **Build (locked): PyInstaller one-folder** (`pyinstaller app.spec`).
-  Output: `dist/yt-paw/yt-paw[.exe]` + `dist/yt-paw/bin/yt-dlp[.exe]` +
-  `dist/yt-paw/bin/ffmpeg[.exe]`.
+- **Build (locked): PyInstaller one-folder** (`packaging/yt_paw.spec`, driven
+  by `python packaging/build.py`; full guide in `docs/packaging.md`). Builds
+  target the host platform (Windows x86_64 or Linux x86_64; PyInstaller cannot
+  cross-compile). Output: `dist/yt-paw/yt-paw[.exe]` + `dist/yt-paw/bin/` with
+  `yt-dlp`, `ffmpeg`, `ffprobe`, and `deno`, plus FFmpeg's `.so` libraries in
+  `dist/yt-paw/lib/` on Linux.
+- **Sidecar provenance:** `packaging/sidecars.lock.json` pins each download
+  URL and SHA-256 per platform. `fetch_sidecars.py` verifies before extraction;
+  routine pin changes go through `packaging/deps.py update --due` (with
+  `packaging/dependency-state.json`), while `--update-pins` remains a low-level
+  checksum refresh. Builds fail closed if an upstream rolling asset changes.
+- **Standalone runtime:** no Python, Qt, FFmpeg, Deno, or yt-dlp install is
+  required. Engine/dependency resolution is app-data `bin/` → bundled
+  `<install>/bin/` → system `PATH`; child processes get those `bin/` dirs on
+  `PATH`. yt-dlp auto-updates write to app-data, never the install folder, so
+  no elevation is needed. Linux FFmpeg binaries carry `RPATH=$ORIGIN/../lib`,
+  so the bundled shared libraries resolve without `LD_LIBRARY_PATH`.
+- **Verification:** `verify_build.py` checks the executable, resources, Qt
+  platform/TLS/JPEG plugins, and the host platform's sidecars (DLLs or
+  `lib/libav*.so*`); `yt-paw[.exe] --self-check` runs the frozen app against a
+  scratch profile and probes every engine/dependency before archiving.
 - **Windows:** ZIP + optional Inno Setup installer. No admin required.
-- **Linux:** AppImage or `.desktop` + folder. System `yt-dlp` is detected and
-  respected; bundled stable remains available as fallback/switch option.
+- **Linux:** one-folder `.tar.gz` with bundled Linux sidecars. Python/Qt and
+  FFmpeg/Deno/yt-dlp are included, but the Qt xcb plugin still needs the
+  distro's X11/OpenGL/fontconfig libraries (glibc/X11/GL are intentionally not
+  bundled). Build against the oldest supported glibc. System `yt-dlp` is
+  detected and respected; bundled stable remains available as fallback/switch
+  option.
 - **macOS:** `.app` via PyInstaller `BUNDLE`; notarization noted as future work.
 - **SBOM:** generate `dist/SBOM.txt` (`pip freeze`) per release for license
-  audit.
-- **Size budget:** PySide6 (~60 MB) + Python stdlib + app (~5 MB) + frozen
-  ffmpeg (~25 MB) + bundled yt-dlp (~12 MB). Target ≤ 110 MB unpacked.
+  audit. License texts (`licenses/`) and `THIRD_PARTY_NOTICES.md` ship in the
+  folder because Qt and FFmpeg are LGPL.
+- **Size budget:** PySide6 + Python + app + FFmpeg (~150 MB shared) + Deno
+  (~95 MB) + yt-dlp (~18 MB). Expect ~350–450 MB unpacked on Windows and
+  ~450–550 MB on Linux, ~200–300 MB compressed; `--no-sidecars` produces a
+  smaller layout-only build.
 
 ---
 
