@@ -273,6 +273,9 @@ git push origin v0.1.1
    both archives and their `.sha256` files;
 5. publishes the release only after all assets are attached.
 
+CI installs the Qt runtime libraries listed above and builds Linux on Ubuntu
+22.04 for glibc compatibility; `ubuntu-latest` is not used for release builds.
+
 If any step fails, the release remains a draft. Re-run the failed workflow for
 the tag after fixing the problem. Manual `workflow_dispatch` runs only produce
 temporary workflow artifacts; they do not publish a release.

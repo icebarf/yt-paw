@@ -22,11 +22,22 @@ concurrency:
 
 jobs:
   quality:
-    runs-on: ubuntu-latest
+    # Pin for release glibc compatibility; ubuntu-latest is 26.04 as of 2026-10.
+    runs-on: ubuntu-22.04
     env:
       QT_QPA_PLATFORM: offscreen
     steps:
       - uses: actions/checkout@v4
+
+      - name: Install Qt runtime libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libegl1 libgl1 libxkbcommon0 libxkbcommon-x11-0 \
+            libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 \
+            libxcb-render-util0 libxcb-shape0 libxcb-xinerama0 libxcb-xfixes0 \
+            libxcb-randr0 libxcb-render0 libxcb-shm0 libxcb-sync1 libxcb-glx0 \
+            libxcb-xkb1 fontconfig
 
       - name: Check release tag matches version
         if: startsWith(github.ref, 'refs/tags/v')
@@ -82,9 +93,21 @@ jobs:
 
   linux:
     needs: quality
-    runs-on: ubuntu-latest
+    # Build on the oldest supported glibc, not the moving ubuntu-latest image.
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
+
+      - name: Install Qt runtime libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libegl1 libgl1 libxkbcommon0 libxkbcommon-x11-0 \
+            libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 \
+            libxcb-render-util0 libxcb-shape0 libxcb-xinerama0 libxcb-xfixes0 \
+            libxcb-randr0 libxcb-render0 libxcb-shm0 libxcb-sync1 libxcb-glx0 \
+            libxcb-xkb1 fontconfig
+
       - uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
