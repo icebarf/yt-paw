@@ -258,32 +258,88 @@ sidecars are being used.
 A release is tag-driven. The tag must match the version in
 `src/ytpaw/__init__.py` and `pyproject.toml` (`v0.1.1` for version `0.1.1`).
 
-### Tagging a release
+### What is a remote?
 
-1. Bump the version in both files if needed:
-   - `src/ytpaw/__init__.py`
-   - `pyproject.toml`
-2. Commit the release state.
-3. Create and push the tag:
+A Git remote is a named URL for another copy of the repository, usually on
+GitHub. `origin` is the conventional name for the primary remote, but a fork or
+mirror can have any name. List the configured remotes with:
 
 ```bash
-git tag -a v0.1.1 -m "yt-paw 0.1.1"
-git push origin v0.1.1
+git remote -v
 ```
 
-Use the remote that hosts the release. Replace `origin` with a fork remote such
-as `icebarf` when releasing from the fork. The workflow rejects a tag that does
-not match both version fields.
+The examples below use `origin`. Replace it with the remote that points at the
+GitHub repository where the release workflow should run. Pushing a tag to a
+different remote does not trigger this repository's workflow.
 
-To move an existing tag after a failed run, delete it locally and remotely,
-then recreate it on the fixed commit. Delete any existing GitHub Release for the
-tag first:
+### Human release checklist
+
+1. Start from an up-to-date default branch:
+
+   ```bash
+   git switch master
+   git pull --ff-only origin master
+   ```
+
+2. Make and test the change.
+
+3. Bump the version in both files:
+
+   ```text
+   src/ytpaw/__init__.py   __version__ = "0.1.2"
+   pyproject.toml          version = "0.1.2"
+   ```
+
+4. Stage the intended files, commit, and push:
+
+   ```bash
+   git add <files>
+   git commit -m "release: 0.1.2"
+   git push origin master
+   ```
+
+5. Optional: validate both builds before tagging with a manual workflow run:
+
+   ```bash
+   gh workflow run build.yml --ref master
+   gh run list --workflow=build.yml
+   ```
+
+   Or use **Actions → build → Run workflow** in GitHub. A manual run uploads
+   temporary artifacts but does not create or publish a release.
+
+6. Create and push the tag. This is what starts the release workflow:
+
+   ```bash
+   VERSION=0.1.2
+   git tag -a "v$VERSION" -m "yt-paw $VERSION"
+   git push origin "v$VERSION"
+   ```
+
+7. Verify the release after the workflow finishes:
+
+   ```bash
+   gh release view "v$VERSION"
+   ```
+
+   Or open **Releases** on GitHub and confirm both archives and both checksum
+   files are attached.
+
+The workflow rejects a tag that does not match both version fields. Normally,
+do not create the GitHub Release manually; the tag push creates it and
+publishes it. The fallback below is for when that job is skipped or fails.
+
+#### Re-tagging after a failed run
+
+Delete any existing GitHub Release for the tag first, then move the tag to the
+fixed commit and push it again:
 
 ```bash
-git tag -d v0.1.1
-git push origin :refs/tags/v0.1.1
-git tag -a v0.1.1 -m "yt-paw 0.1.1"
-git push origin v0.1.1
+VERSION=0.1.2
+git tag -d "v$VERSION"
+git push origin --delete "v$VERSION"
+git tag -a "v$VERSION" -m "yt-paw $VERSION"
+git push origin "v$VERSION"
 ```
 
 ### Automatic release
@@ -301,9 +357,10 @@ git push origin v0.1.1
 CI installs the Qt runtime libraries listed above and builds Linux on Ubuntu
 22.04 for glibc compatibility; `ubuntu-latest` is not used for release builds.
 
-If any step fails, the release remains a draft. Re-run the failed workflow for
-the tag after fixing the problem. Manual `workflow_dispatch` runs only produce
-temporary workflow artifacts; they do not publish a release.
+If an earlier build step fails, no release is created. If the release job
+starts but fails while uploading, the release remains a draft. Fix the problem
+and move the tag as described above. Manual `workflow_dispatch` runs only
+produce temporary workflow artifacts; they do not publish a release.
 
 ### Manual release from Actions artifacts
 
