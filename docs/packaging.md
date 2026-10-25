@@ -258,17 +258,42 @@ sidecars are being used.
 A release is tag-driven. The tag must match the version in
 `src/ytpaw/__init__.py` and `pyproject.toml` (`v0.1.1` for version `0.1.1`).
 
+### Tagging a release
+
+1. Bump the version in both files if needed:
+   - `src/ytpaw/__init__.py`
+   - `pyproject.toml`
+2. Commit the release state.
+3. Create and push the tag:
+
 ```bash
 git tag -a v0.1.1 -m "yt-paw 0.1.1"
 git push origin v0.1.1
 ```
+
+Use the remote that hosts the release. Replace `origin` with a fork remote such
+as `icebarf` when releasing from the fork. The workflow rejects a tag that does
+not match both version fields.
+
+To move an existing tag after a failed run, delete it locally and remotely,
+then recreate it on the fixed commit. Delete any existing GitHub Release for the
+tag first:
+
+```bash
+git tag -d v0.1.1
+git push origin :refs/tags/v0.1.1
+git tag -a v0.1.1 -m "yt-paw 0.1.1"
+git push origin v0.1.1
+```
+
+### Automatic release
 
 `.github/workflows/build.yml` then:
 
 1. validates the tag/version match;
 2. runs lint, type checks, and tests on Linux;
 3. builds both artifacts in parallel (Windows on `windows-latest`, Linux on
-   `ubuntu-latest`);
+   `ubuntu-22.04`);
 4. creates a **draft** GitHub Release with generated release notes and uploads
    both archives and their `.sha256` files;
 5. publishes the release only after all assets are attached.
@@ -279,6 +304,43 @@ CI installs the Qt runtime libraries listed above and builds Linux on Ubuntu
 If any step fails, the release remains a draft. Re-run the failed workflow for
 the tag after fixing the problem. Manual `workflow_dispatch` runs only produce
 temporary workflow artifacts; they do not publish a release.
+
+### Manual release from Actions artifacts
+
+Use this fallback when the automatic release job was skipped or failed, or when
+you deliberately want to create the release page yourself.
+
+GitHub's UI cannot attach an Actions artifact directly to a release. Download
+and extract the artifact wrappers first.
+
+1. Open **Actions → build → the run for the tag** and wait for `quality`,
+   `windows`, and `linux` to pass.
+2. Under **Artifacts**, download:
+   - `yt-paw-windows-x86_64`
+   - `yt-paw-linux-x86_64`
+3. Extract each downloaded wrapper ZIP. It contains the actual release files:
+
+   ```text
+   yt-paw-0.1.1-windows-x86_64.zip
+   yt-paw-0.1.1-windows-x86_64.zip.sha256
+   yt-paw-0.1.1-linux-x86_64.tar.gz
+   yt-paw-0.1.1-linux-x86_64.tar.gz.sha256
+   ```
+
+4. Open **Releases → Draft a new release**.
+5. Select the **existing** tag (`v0.1.1`). Do not create a second tag.
+6. Add the title and release notes.
+7. Drag the four extracted files into **Attach binaries**.
+8. Publish the release.
+
+If the automatic release job already created the release, edit that release
+instead of creating another one. If an asset is missing, use **Edit release**
+and attach it there.
+
+Do not upload the `yt-paw-windows-x86_64` / `yt-paw-linux-x86_64` wrapper ZIPs,
+and do not upload GitHub's generated source-code archives. The wrapper ZIPs are
+Actions containers, not user-facing release assets. Actions artifacts expire;
+release assets do not.
 
 ## Licensing
 

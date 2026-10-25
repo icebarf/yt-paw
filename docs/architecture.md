@@ -735,7 +735,9 @@ runbook; security exceptions use `deps.py update --security`.
 - **Release:** a `v*` tag must match the version in `src/ytpaw/__init__.py` and
   `pyproject.toml`. After both platform builds pass, CI creates a draft GitHub
   Release with generated notes, uploads both archives and their checksums, then
-  publishes it. Manual runs are artifact-only.
+  publishes it. If the release job is skipped, the same archives can be
+  downloaded from Actions and attached manually through the Releases UI.
+  Manual runs are artifact-only.
 - **Windows:** ZIP + optional Inno Setup installer. No admin required.
 - **Linux:** one-folder `.tar.gz` with bundled Linux sidecars. Python/Qt and
   FFmpeg/Deno/yt-dlp are included, but the Qt xcb plugin still needs the
