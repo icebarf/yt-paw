@@ -253,13 +253,29 @@ cat /tmp/yt-paw-check/self-check.txt
 The report lists each engine/dependency with `origin=bundled` when the packaged
 sidecars are being used.
 
-## CI
+## Releasing
 
-`.github/workflows/build.yml` runs lint/type/tests on Linux, then builds both
-artifacts in parallel: Windows on `windows-latest` and Linux on `ubuntu-latest`.
-Manual runs upload them as workflow artifacts. Pushing a `v*` tag runs a final
-release job that attaches both archives and their `.sha256` files to the GitHub
-release.
+A release is tag-driven. The tag must match the version in
+`src/ytpaw/__init__.py` and `pyproject.toml` (`v0.1.1` for version `0.1.1`).
+
+```bash
+git tag -a v0.1.1 -m "yt-paw 0.1.1"
+git push origin v0.1.1
+```
+
+`.github/workflows/build.yml` then:
+
+1. validates the tag/version match;
+2. runs lint, type checks, and tests on Linux;
+3. builds both artifacts in parallel (Windows on `windows-latest`, Linux on
+   `ubuntu-latest`);
+4. creates a **draft** GitHub Release with generated release notes and uploads
+   both archives and their `.sha256` files;
+5. publishes the release only after all assets are attached.
+
+If any step fails, the release remains a draft. Re-run the failed workflow for
+the tag after fixing the problem. Manual `workflow_dispatch` runs only produce
+temporary workflow artifacts; they do not publish a release.
 
 ## Licensing
 
