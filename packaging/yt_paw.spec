@@ -79,7 +79,9 @@ def windows_version_file() -> str | None:
         ],
     )
     VERSION_FILE.parent.mkdir(parents=True, exist_ok=True)
-    VERSION_FILE.write_text(repr(info), encoding="utf-8")
+    # PyInstaller 6.22.3's repr() emits ``versioninfo.VSVersionInfo``, which its
+    # own text loader cannot eval; __str__ is the documented version-file form.
+    VERSION_FILE.write_text(str(info), encoding="utf-8")
     return str(VERSION_FILE)
 
 
