@@ -71,7 +71,7 @@ must not complicate the default path.
 | Concurrency | `QThreadPool` + `QProcess` + Qt signals/slots | Keeps UI thread free. One worker per download job; bounded pool (default 2 concurrent). Progress via signal emission, never direct widget mutation from workers. |
 | Persistence | SQLite only (`sqlite3` stdlib) | Single `app.db` holds `jobs` + `settings`. No TOML/INI/YAML config files. `QSettings` used only for transient Qt window geometry; all domain settings live in SQLite. No ORM in v1; `dataclasses` + thin repository layer. |
 | Engine registry | Python modules + SQLite overrides | Engines are `engines/<id>.py` classes. User overrides (binary path, args template, enabled) stored in `engine_settings` table, not config files. |
-| Packaging | PyInstaller one-folder (Windows x86_64 / Linux x86_64) + per-platform pinned sidecars `yt-dlp`, `ffmpeg` (BtbN LGPL shared), `deno` in `bin/` (FFmpeg `.so` files in `lib/` on Linux) | Team experience with PyInstaller; Nuitka not evaluated. One-folder avoids single-file AV false positives and enables in-place engine update (replace `bin/yt-dlp`). Sidecars are hash-pinned and verified at build time (`docs/packaging.md`). |
+| Packaging | PyInstaller one-folder (Windows x86_64 / Linux x86_64) + per-platform pinned sidecars `yt-dlp`, `ffmpeg` (BtbN LGPL shared), `deno` in `bin/` (FFmpeg `.so` files in `lib/` on Linux) | Team experience with PyInstaller; Nuitka not evaluated. One-folder avoids single-file AV false positives and keeps sidecars as ordinary files; runtime yt-dlp updates are written to `<app-data>/bin/`, not the install folder. Sidecars are hash-pinned and verified at build time (`docs/packaging.md`). |
 | Testing | `pytest` + `pytest-qt` | Headless widget tests in CI (`QT_QPA_PLATFORM=offscreen`). Engine contract tests use fixture JSON, not live network. |
 | Lint/format | `ruff` + `mypy` (strict on core) | Fast, minimal config. Type hints mandatory on engine interface and services. |
 
@@ -113,7 +113,7 @@ flowchart TB
         VIEWS --> VM --> SVC --> ENG_L
         ENG_L --> YT & GAL & SPOT --> RUN
     end
-    YT -->|QProcess CLI| BIN1["bundled bin/yt-dlp OR system yt-dlp<br/>+ frozen bin/ffmpeg"]
+    YT -->|QProcess CLI| BIN1["app-data/bin/yt-dlp OR bundled bin/yt-dlp OR system yt-dlp<br/>+ frozen bin/ffmpeg"]
     GAL -->|QProcess CLI| BIN2["bin/gallery-dl"]
     SPOT -->|QProcess CLI| BIN3["bin/spotdl"]
     RUN -->|writes directly| DL["downloads/<br/>output template"]
@@ -175,15 +175,19 @@ flowchart TB
     DIRS --> DB["2. Init SQLite<br/>create + migrate to latest user_version"]
     DB --> SEED["3. Seed settings defaults<br/>only if key missing"]
     SEED --> DETECT{"4. Detect engines"}
-    DETECT -->|"bundled bin/yt-dlp exists"| PROBE_B["Probe bundled version"]
-    DETECT -->|"Linux system yt-dlp found, no bundled"| PROBE_S["Probe system version<br/>read-only, never overwrite"]
+    DETECT -->|"source=path override"| PROBE_P["Probe user binary"]
+    DETECT -->|"source=auto: app-data bin/yt-dlp exists"| PROBE_M["Probe managed version"]
+    DETECT -->|"source=auto: bundled bin/yt-dlp exists"| PROBE_B["Probe bundled version"]
+    DETECT -->|"source=system or no managed/bundled: system yt-dlp found"| PROBE_S["Probe system version<br/>read-only, never overwrite"]
     DETECT -->|"none found"| WIZ["Setup wizard:<br/>use system / download stable / pick path"]
-    PROBE_B --> FF["5. Probe frozen ffmpeg"]
+    PROBE_P --> FF["5. Probe frozen ffmpeg"]
+    PROBE_M --> FF
+    PROBE_B --> FF
     PROBE_S --> FF
     WIZ --> FF
-    FF --> UPD{"6. Auto-update check<br/>bundled stable channel?"}
-    UPD -->|"yes + update available"| AUTO["Download stable engine<br/>atomic replace, show toast"]
-    UPD -->|"system engine"| SKIP["Respect system<br/>show version + hint only"]
+    FF --> UPD{"6. Auto-update check<br/>source=auto + stable?"}
+    UPD -->|"yes + update available"| AUTO["Download stable engine to<br/>app-data/bin, atomic replace, show toast"]
+    UPD -->|"source=system/path"| SKIP["Respect selected binary<br/>show version + hint only"]
     AUTO --> READY(["Ready: Home view"])
     SKIP --> READY
 ```
@@ -293,10 +297,12 @@ Rules (unchanged):
 Wraps **any** `yt-dlp`-family binary (`yt-dlp`, `youtube-dl`, forks) via CLI.
 Playlist support is first-class, not a flag afterthought (see §5.6).
 
-- **Discovery (in order):**
-  1. User override from `engine_settings` (`ytdlp.binary_path`).
-  2. Bundled sidecar `bin/yt-dlp[.exe]` shipped with the app.
-  3. System `PATH` (`shutil.which("yt-dlp")`) — common on Linux.
+- **Discovery (by `engine_settings(ytdlp, source)`):**
+  - `auto` (default for a fresh install): managed
+    `<app-data>/bin/yt-dlp[.exe]` first, then bundled
+    `<install>/bin/yt-dlp[.exe]`, then system `PATH`.
+  - `path`: the user-provided `engine_settings(ytdlp, binary_path)`.
+  - `system`: system `PATH` only; the updater never writes this binary.
   Resolved path + origin (`bundled|custom|system`) + version are shown in the
   footer and stored per-job (`engine_version`, `engine_origin`) for
   reproducibility.
@@ -312,14 +318,21 @@ Playlist support is first-class, not a flag afterthought (see §5.6).
   Playlist range selection maps directly to `--playlist-start/end` or to
   enqueuing N child jobs (default: child jobs, so retry/cancel is per-entry).
 - **Update policy (auto at startup):**
-  - Bundled engine → **stable channel, auto-update at startup** (check, then
-    atomic replace `bin/yt-dlp.new` → `bin/yt-dlp`). Toast shows old → new.
-    No app release required. User can disable via
+  - `source=auto` → **stable channel, auto-update at startup**. The updater
+    checks the latest GitHub release, verifies the release digest (or
+    `SHA2-256SUMS` as fallback), writes a `.new` file beside
+    `<app-data>/bin/yt-dlp[.exe]`, then atomically replaces it. The bundled
+    install copy is never modified and remains the fallback. Toast shows old →
+    new. No app release required. User can disable via
     `engine_settings(ytdlp, auto_update)=false`.
-  - System engine (Linux `PATH`) → **never overwrite.** Show version + distro
-    hint (`apt/dnf/pacman/pipx`). Offer “Switch to bundled stable” action.
-  - Source: `https://github.com/yt-dlp/yt-dlp/releases/latest/download/`
-    with SHA256 verification where published, HTTPS allowlist enforced.
+  - `source=auto` with only a system binary present → the startup check
+    downloads a managed copy into app-data when auto-update is enabled.
+  - `source=system` (Linux `PATH`) → **never overwrite.** Show version + distro
+    hint (`apt/dnf/pacman/pipx`). Users can switch `source` to `auto` in
+    Settings if they want app-managed updates.
+  - `source=path` → user-managed; the updater does not replace it.
+  - Runtime update source: GitHub release metadata and asset URLs over HTTPS
+    with an allowlist; SHA-256 is mandatory.
 - **Args template:** stored in `engine_settings`
   (`ytdlp.info_args`, `ytdlp.download_args`) so forks with
   divergent flags work with zero code changes.
@@ -696,12 +709,12 @@ sanitized via engine `--restrict-filenames` + app-side forbidden-char strip.
 | Artifact | Cadence | Mechanism |
 |----------|---------|-----------|
 | yt-paw app | On features/fixes only | GitHub Releases; auto-check at startup with toast if newer tag exists. Full in-app auto-updater (download + install) is **deferred to plan Phase 6, after the app exists and is stable** — see `plan/execution-plan.md`. No silent install in v1. |
-| Bundled engine (`bin/yt-dlp`) | Stable channel, **auto-update at startup** | **Implemented 2026-10-05** (`infra/updater.py`): for source=auto engines only — GitHub latest release JSON (carries per-asset `digest: sha256`) → asset → mandatory SHA256 verify → atomic replace into `<app-data>/bin/`. SHA2-256SUMS is only a fallback (that endpoint stalls 20s+); dependency downloads fetch checksum + archive in parallel. GitHub asset hosts intermittently blackhole TCP for ~21s, so an **8s stall watchdog retries once with a fresh connection**; second stall fails friendly. Banner shows “Checking…”/“Downloading…” immediately. Host allowlist, HTTPS, 90s watchdog. Manual “Get latest (stable)” button in Settings. System/PATH engines never touched. |
-| System engine (Linux `PATH`) | Distro cadence | **Respected, never overwritten.** UI shows `system yt-dlp X` + package hint. One-click “Switch to bundled stable” if user wants auto-updates. |
+| yt-dlp engine (`source=auto`) | Stable channel, **auto-update at startup** | **Implemented 2026-10-05** (`infra/updater.py`): for source=auto engines only — GitHub latest release JSON (carries per-asset `digest: sha256`) → asset → mandatory SHA256 verify → atomic replace into `<app-data>/bin/`. The bundled install copy is never modified and remains the fallback. SHA2-256SUMS is only a fallback (that endpoint stalls 20s+); dependency downloads fetch checksum + archive in parallel. GitHub asset hosts intermittently blackhole TCP for ~21s, so an **8s stall watchdog retries once with a fresh connection**; second stall fails friendly. Banner shows “Checking…”/“Downloading…” immediately. Host allowlist, HTTPS, 90s watchdog. Manual “Get latest (stable)” button in Settings. System/PATH engines never touched. |
+| System engine (Linux `PATH`) | Distro cadence | **Respected, never overwritten.** UI shows `system yt-dlp X` + package hint. Users can switch `source` to `auto` in Settings if they want app-managed updates. |
 | ffmpeg (frozen) | App releases only | Bundled and probed at startup (`ffmpeg -version`) for About/diagnostics. **Frozen by design** — extractor churn does not require ffmpeg bumps. Updated only when app ships. |
 | Pinned Python + bundled sidecars | 90–180 days per component | `packaging/deps.py` reads `dependency-policy.json`/`dependency-state.json` and only updates when a component is due. Python pins move together with `uv lock`; yt-dlp/Deno URLs and SHA-256 move together; FFmpeg hashes refresh from BtbN's rolling checksum. Monthly CI only reports due; it never pushes dependency changes. |
 
-This satisfies §2.1-2: YouTube extractor breakage is fixed by bundled-engine
+This satisfies §2.1-2: YouTube extractor breakage is fixed by yt-dlp engine
 auto-update, not app release, while Linux system installs remain untouched.
 The dependency train is intentionally idle between due dates: an available newer
 version is not a reason to update. `docs/dependency-updates.md` is the human/agent

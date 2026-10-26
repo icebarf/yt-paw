@@ -205,12 +205,15 @@ Linux:
 ```
 
 `infra/runtime_paths.py` puts app-managed and bundled `bin/` directories on the
-`PATH` of every engine child process. Resolution order for engines and
-dependencies is:
+`PATH` of every engine child process. For engines with `source=auto` (the fresh
+install default) and for dependency lookup, resolution order is:
 
 1. `<app-data>/bin/` — downloaded/auto-updated by the app
 2. `<install>/bin/` — what the build ships
 3. system `PATH` — respected but never overwritten
+
+`source=path` uses the user-provided binary; `source=system` uses system `PATH`
+only and is never written by the updater.
 
 yt-dlp auto-updates into `<app-data>/bin/`, not the install folder. This keeps
 Program Files (or any read-only location) untouched and needs no elevation. The

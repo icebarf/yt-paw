@@ -35,7 +35,7 @@ Both rules exist to avoid churn and buggy same-week releases.
 | `qt` | PySide6 | 180 days | 30 days | 2027-04-23 |
 | `dev` | pytest, pytest-qt, ruff, mypy | 120 days | 30 days | 2027-02-22 |
 | `build` | PyInstaller, hooks, setuptools | 180 days | 30 days | 2027-04-23 |
-| `yt-dlp` | bundled engine | 90 days | 7 days | 2027-01-23 |
+| `yt-dlp` | bundled engine pin | 90 days | 7 days | 2027-01-23 |
 | `deno` | JS runtime | 120 days | 30 days | 2027-02-22 |
 | `ffmpeg` | BtbN shared build | 180 days | none (rolling) | 2027-04-23 |
 
